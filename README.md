@@ -1,8 +1,9 @@
-# GKE Multi-Cluster DNS Validation — Dataplane V1 vs V2
+# # GKE Dataplane Migration Lab — Kube-DNS to Cloud DNS for GKE
 
-This project provisions and validates a complete multi-cluster GKE environment on Google Cloud,
-with a focus on comparing DNS behavior and cross-cluster service discovery between two GKE
-cluster configurations: **Dataplane V1 (kube-dns)** and **Dataplane V2 (Cloud DNS)**.
+This project provisions and validates two GKE clusters on Google Cloud to explore DNS provider behavior across GKE dataplane configurations during a cluster migration. 
+The first cluster, **gke-std-dpv1**, runs Dataplane V1 with the default **kube-dns** provider. The second cluster, **gke-std-dpv2**, runs Dataplane V2 with **Cloud DNS for GKE** as the DNS provider. 
+The goal is to validate DNS resolution behavior, service discovery, and connectivity patterns as a foundation for migrating workloads from Dataplane V1 to Dataplane V2.
+
 
 Both clusters share a single global VPC and use Internal Passthrough Network Load Balancers for
 cross-cluster traffic. Validation covers in-cluster DNS, in-cluster HTTP, cross-cluster DNS,
