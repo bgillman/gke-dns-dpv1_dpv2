@@ -4,11 +4,169 @@ This project provisions and validates a complete multi-cluster GKE environment o
 with a focus on comparing DNS behavior and cross-cluster service discovery between two GKE
 cluster configurations: **Dataplane V1 (kube-dns)** and **Dataplane V2 (Cloud DNS)**.
 
-Both clusters share a single global VPC, use Internal Passthrough Network Load Balancers for
-cross-cluster traffic, and are validated with a full test suite covering in-cluster DNS,
-in-cluster HTTP, cross-cluster DNS, and cross-cluster HTTP — including cross-region paths.
+Both clusters share a single global VPC and use Internal Passthrough Network Load Balancers for
+cross-cluster traffic. Validation covers in-cluster DNS, in-cluster HTTP, cross-cluster DNS,
+and cross-cluster HTTP — including cross-region paths.
 
-All tests passed. Full results are in [`k8s-dns-validation/validation/`](k8s-dns-validation/validation/).
+---
+
+## Step 1 — VPC Networking (Deploy First)
+
+> **The VPC must be fully provisioned before any GKE cluster is created.** The clusters
+> reference pre-existing subnets and named secondary IP ranges by name at creation time.
+> If those resources do not exist, cluster creation will fail.
+
+### Design and Architecture
+
+The network foundation is a single **custom-mode VPC** named `vpc-global`, provisioned by
+Terraform in `vpc-networking/`. Every other resource in this project — GKE clusters, Internal
+Load Balancers, Cloud DNS zones, and firewall rules — sits on top of it.
+
+**Why a single shared VPC?**
+
+Using one VPC for all clusters means they share the same routing domain. There is no VPC
+peering, no shared VPC host/service project split, and no need to export or import routes
+between separate networks. A pod in `us-central1` can reach an Internal Load Balancer in
+`us-west1` over native VPC routing — no additional gateway or tunnel required.
+
+**Why `routing_mode = GLOBAL`?**
+
+By default, GCP VPCs use `REGIONAL` routing — Cloud Routers only advertise and learn routes
+within their own region. `GLOBAL` routing allows Cloud Routers in any region to exchange
+routes across the entire VPC. This is required for the cross-region Internal LB traffic in
+this project: dpv1 pods in `us-central1` must be able to reach the dpv2 ILB in `us-west1`
+over a single VPC without any additional configuration.
+
+**Why custom-mode subnets?**
+
+Custom mode (`auto_create_subnetworks = false`) means GCP creates no subnets automatically.
+Only the three explicitly defined subnets exist. This prevents workloads from accidentally
+attaching to unintended networks and keeps the IP address plan fully under control.
+
+**Secondary IP ranges — why they must exist before cluster creation**
+
+Each GKE cluster requires two secondary IP ranges on its subnet: one for pods and one for
+services. These ranges are referenced by name in the cluster creation scripts using
+`--cluster-secondary-range-name` and `--services-secondary-range-name`. GKE will not create
+new secondary ranges if the names already exist — it will attach to the pre-existing ones.
+Attempting to pass a raw CIDR (`--cluster-ipv4-cidr`) when a named range with that CIDR
+already exists causes a conflict error and the cluster creation fails.
+
+### Network Topology
+
+```
+vpc-global  (custom-mode, GLOBAL routing)
+├── central-vpc-subnet-01  (us-central1)   10.0.0.0/20   — GKE nodes
+│   ├── secondary: central-pods            10.4.0.0/14   — GKE pods
+│   └── secondary: central-services        10.16.0.0/20  — GKE services
+├── west-vpc-subnet-01     (us-west1)      10.1.0.0/20   — GKE nodes
+│   ├── secondary: west-pods               10.8.0.0/14   — GKE pods
+│   └── secondary: west-services           10.17.0.0/20  — GKE services
+└── east-vpc-subnet-01     (us-east1)      10.2.0.0/20   — GKE nodes
+    ├── secondary: east-pods               10.12.0.0/14  — GKE pods
+    └── secondary: east-services           10.18.0.0/20  — GKE services
+
+Per-region supporting resources (all three regions):
+  Cloud Router  →  router-{central,west,east}
+  Cloud NAT     →  nat-{central,west,east}
+```
+
+**Cloud NAT** provides outbound internet access for private GKE nodes (which have no external
+IPs) — required for pulling container images and reaching external APIs. One NAT gateway is
+created per region, each attached to its regional Cloud Router.
+
+**VPC Flow Logs** are enabled on all subnets (50% sample, 5-second intervals, full metadata)
+for traffic visibility and connectivity debugging.
+
+### IP Address Plan
+
+No ranges overlap. The full address space:
+
+| Resource | CIDR / Address | Description |
+|---|---|---|
+| `central-vpc-subnet-01` | `10.0.0.0/20` | GKE nodes — us-central1 |
+| `west-vpc-subnet-01` | `10.1.0.0/20` | GKE nodes — us-west1 |
+| `east-vpc-subnet-01` | `10.2.0.0/20` | GKE nodes — us-east1 |
+| `central-pods` | `10.4.0.0/14` | GKE pods — us-central1 (10.4.0.0–10.7.255.255) |
+| `west-pods` | `10.8.0.0/14` | GKE pods — us-west1 (10.8.0.0–10.11.255.255) |
+| `east-pods` | `10.12.0.0/14` | GKE pods — us-east1 (10.12.0.0–10.15.255.255) |
+| `central-services` | `10.16.0.0/20` | GKE services — us-central1 |
+| `west-services` | `10.17.0.0/20` | GKE services — us-west1 |
+| `east-services` | `10.18.0.0/20` | GKE services — us-east1 |
+| dpv1 kube-dns ClusterIP | `10.16.0.10` | In-cluster resolver for gke-std-dpv1 |
+| dpv1 ILB (`backend-ilb`) | `10.0.0.11` | Internal LB — allocated from central-vpc-subnet-01 |
+| dpv2 Cloud DNS stub | `169.254.20.10` | Node-local stub resolver — link-local, per-node |
+| dpv2 ILB (`backend-ilb`) | `10.1.0.6` | Internal LB — allocated from west-vpc-subnet-01 |
+| GCP Cloud DNS resolver | `169.254.169.254` | VPC metadata / Cloud DNS resolver |
+
+### Deploy the VPC
+
+```bash
+cd vpc-networking/
+
+# Set the required variable — never committed to version control
+export TF_VAR_project_id="your-project-id"
+
+# Deploy
+terraform init
+terraform plan
+terraform apply
+
+# Verify all subnets, secondary ranges, routers, and NAT gateways
+./validate.sh
+```
+
+A single `terraform apply` will, in order:
+1. Enable 9 required Google Cloud APIs
+2. Delete the default VPC and its permissive firewall rules
+3. Create `vpc-global` (custom mode, GLOBAL routing)
+4. Create 3 regional subnets with pod and service secondary ranges
+5. Create Cloud Routers and Cloud NAT gateways in each region
+
+**Do not proceed to cluster creation until `terraform apply` and `./validate.sh` both
+complete successfully.**
+
+---
+
+## Architecture Overview
+
+```
+Google Cloud Project: gillman-gke-dns
+└── vpc-global  (custom-mode VPC, GLOBAL routing mode)
+    │
+    ├── central-vpc-subnet-01  (us-central1)
+    │   ├── Nodes: 10.0.0.0/20
+    │   ├── Pods:  10.4.0.0/14  (secondary range: central-pods)
+    │   └── Svcs:  10.16.0.0/20 (secondary range: central-services)
+    │   └── [GKE Cluster: gke-std-dpv1]
+    │       ├── DNS: kube-dns (cluster.local)
+    │       ├── CNI: Dataplane V1 (LEGACY_DATAPATH / standard kube-proxy)
+    │       └── ILB: backend-central.svc.internal → 10.0.0.11
+    │
+    ├── west-vpc-subnet-01  (us-west1)
+    │   ├── Nodes: 10.1.0.0/20
+    │   ├── Pods:  10.8.0.0/14  (secondary range: west-pods)
+    │   └── Svcs:  10.17.0.0/20 (secondary range: west-services)
+    │   └── [GKE Cluster: gke-std-dpv2]
+    │       ├── DNS: Cloud DNS (gke-std-dpv2.local, VPC scope)
+    │       ├── CNI: Dataplane V2 (ADVANCED_DATAPATH / eBPF)
+    │       └── ILB: backend-west.svc.internal → 10.1.0.6
+    │
+    ├── east-vpc-subnet-01  (us-east1)  [provisioned, no cluster deployed]
+    │   ├── Nodes: 10.2.0.0/20
+    │   ├── Pods:  10.12.0.0/14
+    │   └── Svcs:  10.18.0.0/20
+    │
+    ├── Cloud DNS private zone: svc.internal (visibility=private, network=vpc-global)
+    │   ├── backend-central.svc.internal → 10.0.0.11  (dpv1 ILB)
+    │   └── backend-west.svc.internal    → 10.1.0.6   (dpv2 ILB)
+    │
+    ├── Cloud Router + Cloud NAT — one pair per region (central, west, east)
+    │
+    └── Firewall rules (cross-cluster ingress on tcp:80)
+        ├── allow-dpv1-pods-to-dpv2-ilb  (source: 10.4.0.0/14 → tags: gke-cluster)
+        └── allow-dpv2-pods-to-dpv1-ilb  (source: 10.8.0.0/14 → tags: gke-cluster)
+```
 
 ---
 
@@ -58,69 +216,6 @@ gke-dns-dpv1_2/
         ├── validation-commands.md         # Reference validation commands
         └── run-tests.sh                   # Automated test runner
 ```
-
----
-
-## Architecture Overview
-
-```
-Google Cloud Project: gillman-gke-dns
-└── vpc-global  (custom-mode VPC, GLOBAL routing mode)
-    │
-    ├── central-vpc-subnet-01  (us-central1)
-    │   ├── Nodes: 10.0.0.0/20
-    │   ├── Pods:  10.4.0.0/14  (secondary range: central-pods)
-    │   └── Svcs:  10.16.0.0/20 (secondary range: central-services)
-    │   └── [GKE Cluster: gke-std-dpv1]
-    │       ├── DNS: kube-dns (cluster.local)
-    │       ├── CNI: Dataplane V1 (LEGACY_DATAPATH / standard kube-proxy)
-    │       └── ILB: backend-central.svc.internal → 10.0.0.11
-    │
-    ├── west-vpc-subnet-01  (us-west1)
-    │   ├── Nodes: 10.1.0.0/20
-    │   ├── Pods:  10.8.0.0/14  (secondary range: west-pods)
-    │   └── Svcs:  10.17.0.0/20 (secondary range: west-services)
-    │   └── [GKE Cluster: gke-std-dpv2]
-    │       ├── DNS: Cloud DNS (gke-std-dpv2.local, VPC scope)
-    │       ├── CNI: Dataplane V2 (ADVANCED_DATAPATH / eBPF)
-    │       └── ILB: backend-west.svc.internal → 10.1.0.6
-    │
-    ├── east-vpc-subnet-01  (us-east1)  [provisioned, no cluster deployed]
-    │   ├── Nodes: 10.2.0.0/20
-    │   ├── Pods:  10.12.0.0/14
-    │   └── Svcs:  10.18.0.0/20
-    │
-    ├── Cloud DNS private zone: svc.internal (visibility=private, network=vpc-global)
-    │   ├── backend-central.svc.internal → 10.0.0.11  (dpv1 ILB)
-    │   └── backend-west.svc.internal    → 10.1.0.6   (dpv2 ILB)
-    │
-    ├── Cloud Router + Cloud NAT — one pair per region (central, west, east)
-    │
-    └── Firewall rules (cross-cluster ingress on tcp:80)
-        ├── allow-dpv1-pods-to-dpv2-ilb  (source: 10.4.0.0/14 → tags: gke-cluster)
-        └── allow-dpv2-pods-to-dpv1-ilb  (source: 10.8.0.0/14 → tags: gke-cluster)
-```
-
----
-
-## IP Address Plan
-
-| Resource | CIDR / Address | Description |
-|---|---|---|
-| `central-vpc-subnet-01` | `10.0.0.0/20` | GKE nodes — us-central1 |
-| `west-vpc-subnet-01` | `10.1.0.0/20` | GKE nodes — us-west1 |
-| `east-vpc-subnet-01` | `10.2.0.0/20` | GKE nodes — us-east1 |
-| `central-pods` | `10.4.0.0/14` | GKE pods — us-central1 (10.4.0.0–10.7.255.255) |
-| `west-pods` | `10.8.0.0/14` | GKE pods — us-west1 (10.8.0.0–10.11.255.255) |
-| `east-pods` | `10.12.0.0/14` | GKE pods — us-east1 (10.12.0.0–10.15.255.255) |
-| `central-services` | `10.16.0.0/20` | GKE services — us-central1 |
-| `west-services` | `10.17.0.0/20` | GKE services — us-west1 |
-| `east-services` | `10.18.0.0/20` | GKE services — us-east1 |
-| dpv1 kube-dns ClusterIP | `10.16.0.10` | In-cluster resolver for gke-std-dpv1 |
-| dpv1 ILB (`backend-ilb`) | `10.0.0.11` | Internal LB from central-vpc-subnet-01 |
-| dpv2 Cloud DNS stub | `169.254.20.10` | Node-local stub resolver — link-local, per-node |
-| dpv2 ILB (`backend-ilb`) | `10.1.0.6` | Internal LB from west-vpc-subnet-01 |
-| GCP Cloud DNS resolver | `169.254.169.254` | VPC metadata / Cloud DNS resolver |
 
 ---
 
@@ -219,29 +314,9 @@ Key characteristics:
 - A Google Cloud project with billing enabled
 - The authenticated identity must have `roles/editor` or equivalent for initial setup
 
-### Phase 1 — VPC Networking (Terraform)
+### Phase 1 — VPC Networking
 
-```bash
-cd vpc-networking/
-
-# Set required variable (never committed)
-export TF_VAR_project_id="your-project-id"
-
-# Deploy
-terraform init
-terraform plan
-terraform apply
-
-# Verify
-./validate.sh
-```
-
-This single `terraform apply` will:
-1. Enable 9 required Google Cloud APIs
-2. Delete the default VPC and its permissive firewall rules
-3. Create `vpc-global` (custom mode, GLOBAL routing)
-4. Create 3 subnets with secondary pod/service ranges
-5. Create Cloud Routers and Cloud NAT in each region
+See [Step 1 — VPC Networking](#step-1--vpc-networking-deploy-first) above.
 
 ### Phase 2 — Create GKE Clusters
 
@@ -313,23 +388,14 @@ kubectl apply -f k8s-dns-validation/dpv2/backend-svc-ilb.yaml
 kubectl apply -f k8s-dns-validation/validation/debug-pod.yaml
 
 # Wait for ILBs to receive an IP (may take 60–90 seconds)
-# Terminal 1:
-kubectl get svc backend-ilb -w
-
-# Terminal 2:
-kubectl get svc backend-ilb -w
+kubectl get svc backend-ilb -w   # run in each terminal
 ```
 
 Record both ILB IPs before proceeding:
 
 ```bash
-# Terminal 1 (dpv1):
 kubectl get svc backend-ilb -o jsonpath='{.status.loadBalancer.ingress[0].ip}{"\n"}'
-# Expected: 10.0.0.11
-
-# Terminal 2 (dpv2):
-kubectl get svc backend-ilb -o jsonpath='{.status.loadBalancer.ingress[0].ip}{"\n"}'
-# Expected: 10.1.0.6
+# dpv1 expected: 10.0.0.11  |  dpv2 expected: 10.1.0.6
 ```
 
 ### Phase 4 — Cloud DNS Private Zone
@@ -343,8 +409,7 @@ cd k8s-dns-validation/cloud-dns/
 # Create the zone (run once)
 ./01-create-zone.sh
 
-# Add A records (fill in the ILB IPs recorded in Phase 3 first)
-# Edit 02-add-records.sh: set DPV1_ILB_IP and DPV2_ILB_IP
+# Edit 02-add-records.sh: set DPV1_ILB_IP and DPV2_ILB_IP, then run
 ./02-add-records.sh
 
 # Verify
@@ -413,94 +478,6 @@ ILB:80 → NodePort:30xxx → Pod:8080
 
 ---
 
-## Validation Results
-
-Both cluster test suites passed completely. Full output and analysis is in the validation files.
-
-### gke-std-dpv1 (kube-dns) — All Tests Passed
-
-| Test | Description | Result |
-|---|---|---|
-| 1 | In-cluster DNS — `backend.default.svc.cluster.local` via kube-dns | ✅ Pass |
-| 2 | In-cluster HTTP — `whereami` confirms cluster identity | ✅ Pass |
-| 3a | Cross-cluster DNS — `backend-central.svc.internal` → `10.0.0.11` | ✅ Pass |
-| 3b | Cross-cluster DNS — `backend-west.svc.internal` → `10.1.0.6` | ✅ Pass |
-| 4a | Cross-cluster HTTP — dpv1 ILB loopback (same cluster) | ✅ Pass |
-| 4b | Cross-cluster HTTP — dpv2 ILB cross-region (`us-central1` → `us-west1`) | ✅ Pass |
-| 5 | kube-dns stub domain → dpv2 Cloud DNS (`backend.default.svc.gke-std-dpv2.local`) | ✅ Pass |
-
-**Test 4b** (headline result from dpv1): confirms the full cross-region path —
-dpv1 pod → kube-dns stub domain → Cloud DNS `svc.internal` A record → dpv2 ILB
-(global access) → dpv2 backend pod in `us-west1`.
-
-```json
-{
-    "cluster_name": "gke-std-dpv2",
-    "host_header": "backend-west.svc.internal",
-    "metadata": "cluster=gke-std-dpv2 | region=us-west1 | dns=cloud-dns | subnet=west-vpc-subnet-01",
-    "pod_ip": "10.8.2.16",
-    "zone": "us-west1-a"
-}
-```
-
-### gke-std-dpv2 (Cloud DNS) — All Tests Passed
-
-| Test | Description | Result |
-|---|---|---|
-| 1 | In-cluster DNS — `backend.default.svc.gke-std-dpv2.local` via Cloud DNS stub | ✅ Pass |
-| 2 | In-cluster HTTP — `whereami` confirms cluster identity | ✅ Pass |
-| 3a | Cross-cluster DNS — `backend-central.svc.internal` → `10.0.0.11` | ✅ Pass |
-| 3b | Cross-cluster DNS — `backend-west.svc.internal` → `10.1.0.6` | ✅ Pass |
-| 4a | Cross-cluster HTTP — dpv1 ILB cross-region (`us-west1` → `us-central1`) | ✅ Pass |
-| 4b | Cross-cluster HTTP — dpv2 ILB loopback (same cluster) | ✅ Pass |
-
-**Zero ConfigMap configuration required on dpv2.** All cross-cluster DNS resolution —
-including `svc.internal` and `gke-std-dpv2.local` from dpv1 — worked natively via
-Cloud DNS VPC scope.
-
----
-
-## Issues Encountered and Resolved
-
-### 1. Pod CIDR conflict on cluster creation
-
-**Symptom:** Cluster creation failed with a CIDR conflict error.
-
-**Root cause:** The cluster creation script passed `--cluster-ipv4-cidr` with a CIDR that was
-already allocated as a named secondary range by Terraform. GKE tried to create a new secondary
-range with the same CIDR, conflicting with the existing one.
-
-**Fix:** Replaced `--cluster-ipv4-cidr` with `--cluster-secondary-range-name` (referencing the
-Terraform-created range by name) and added `--services-secondary-range-name` for the same
-reason. GKE now attaches to the pre-existing secondary ranges instead of trying to create new ones.
-
-### 2. Control plane public IP
-
-**Symptom:** The cluster was created with a public IP on the control plane.
-
-**Root cause:** The original script included `--enable-ip-access`, which causes GKE to assign
-a public IP-based endpoint to the control plane.
-
-**Fix:** Replaced with `--no-enable-ip-access` and `--enable-dns-access`. The DNS-based
-endpoint is the sole access method. The control plane has no public IP, no master authorized
-network flags are needed, and `kubectl` traffic routes through Google's private network.
-
-### 3. Internal LB cross-region timeout
-
-**Symptom:** HTTP calls from dpv1 pods to `backend-west.svc.internal` (`10.1.0.6`) timed out
-despite correct DNS resolution — `nslookup` returned the right IP but `curl` hung.
-
-**Root cause:** GCP Internal Passthrough NLBs are **regional by default**. Traffic sourced
-from `us-central1` (dpv1 pods) reaching a `us-west1` forwarding rule at `10.1.0.6` was
-silently dropped at the load balancer layer. This happens before firewall rules are evaluated,
-so no firewall log entries appeared.
-
-**Fix:** Added `networking.gke.io/internal-load-balancer-allow-global-access: "true"` to
-both ILB Service manifests. This upgrades the forwarding rule to global access mode, accepting
-traffic from any region within the VPC.
-
----
-
 ## Key gcloud Commands
 
 ### Cluster management
@@ -537,10 +514,10 @@ gcloud dns managed-zones describe svc-internal \
 gcloud dns record-sets list --zone=svc-internal --project=gillman-gke-dns
 
 # In-cluster DNS resolution (from debug pod)
-kubectl exec -it debug -- nslookup backend.default.svc.cluster.local     # dpv1
-kubectl exec -it debug -- nslookup backend.default.svc.gke-std-dpv2.local # dpv2
-kubectl exec -it debug -- nslookup backend-central.svc.internal           # both clusters
-kubectl exec -it debug -- nslookup backend-west.svc.internal              # both clusters
+kubectl exec -it debug -- nslookup backend.default.svc.cluster.local      # dpv1
+kubectl exec -it debug -- nslookup backend.default.svc.gke-std-dpv2.local  # dpv2
+kubectl exec -it debug -- nslookup backend-central.svc.internal            # both clusters
+kubectl exec -it debug -- nslookup backend-west.svc.internal               # both clusters
 ```
 
 ### ILB and firewall validation
