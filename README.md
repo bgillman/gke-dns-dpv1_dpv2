@@ -1,4 +1,4 @@
-# # GKE Dataplane Migration Lab — Kube-DNS to Cloud DNS for GKE
+# GKE Dataplane Migration Lab — Kube-DNS to Cloud DNS for GKE
 
 This project provisions and validates two GKE clusters on Google Cloud to explore DNS provider behavior across GKE dataplane configurations during a cluster migration. 
 The first cluster, **gke-std-dpv1**, runs Dataplane V1 with the default **kube-dns** provider. The second cluster, **gke-std-dpv2**, runs Dataplane V2 with **Cloud DNS for GKE** as the DNS provider. 
