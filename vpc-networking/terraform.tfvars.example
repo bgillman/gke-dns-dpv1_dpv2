@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# terraform.tfvars.example
+#
+# Copy this file to terraform.tfvars and fill in your values, OR export the
+# required variable as an environment variable (recommended):
+#
+#   export TF_VAR_project_id="your-google-cloud-project-id"
+#
+# terraform.tfvars is gitignored and will never be committed.
+# This example file is safe to commit — it contains no real values.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Required
+project_id = "YOUR_PROJECT_ID"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional overrides — defaults are defined in variables.tf
+# ─────────────────────────────────────────────────────────────────────────────
+
+# vpc_name       = "vpc-global"
+
+# central_region = "us-central1"
+# west_region    = "us-west1"
+# east_region    = "us-east1"
+
+# Primary node ranges (/20)
+# central_subnet_cidr = "10.0.0.0/20"
+# west_subnet_cidr    = "10.1.0.0/20"
+# east_subnet_cidr    = "10.2.0.0/20"
+
+# GKE pod ranges (/14)
+# central_pods_cidr = "10.4.0.0/14"
+# west_pods_cidr    = "10.8.0.0/14"
+# east_pods_cidr    = "10.12.0.0/14"
+
+# GKE service ranges (/20)
+# central_services_cidr = "10.16.0.0/20"
+# west_services_cidr    = "10.17.0.0/20"
+# east_services_cidr    = "10.18.0.0/20"

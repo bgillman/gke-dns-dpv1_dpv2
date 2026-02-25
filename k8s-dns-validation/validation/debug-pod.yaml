@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug
+  namespace: default
+  labels:
+    app: debug
+spec:
+  containers:
+  - name: debug
+    # nicolaka/netshoot includes: curl, dig, nslookup, ping, tcpdump, and more.
+    # Deploy this pod into BOTH clusters for validation (same manifest, both contexts).
+    image: nicolaka/netshoot:latest
+    command: ["sleep", "infinity"]
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "32Mi"
+  restartPolicy: Never

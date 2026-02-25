@@ -1,0 +1,133 @@
+# ==============================================================================
+# GKE DNS Validation — Root .gitignore
+# ==============================================================================
+
+# ── Terraform ─────────────────────────────────────────────────────────────────
+
+# State files contain sensitive resource details and live infrastructure state.
+# Use remote state (GCS bucket) for team environments.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Working directory created by `terraform init`.
+# Contains downloaded provider binaries — large, OS-specific, not for VCS.
+**/.terraform/
+.terraform/
+
+# Local variable files may contain project IDs, credentials, or other secrets.
+# The committed *.example files are the documented templates.
+terraform.tfvars
+*.auto.tfvars
+*.tfvars.local
+
+# Terraform crash and debug logs
+crash.log
+crash.*.log
+
+# Local override files — used for development tweaks, never shared
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform CLI config files
+.terraformrc
+terraform.rc
+
+# Terraform lock file (optional — include if you want consistent provider versions across team)
+# .terraform.lock.hcl
+
+
+# ── GKE / gcloud ──────────────────────────────────────────────────────────────
+
+# Cluster configuration file — contains project ID and environment-specific values
+config.sh
+
+# TLS private keys — never commit
+privkey.pem
+*.pem
+*.key
+
+
+# ── Credentials and secrets ───────────────────────────────────────────────────
+
+# Google service account key files
+*.json
+# Exception: keep example/template JSON files if needed
+# !example.json
+
+# Generic credential and secret file patterns
+*.credentials
+*credentials*.json
+*service-account*.json
+*serviceaccount*.json
+.env
+.env.*
+!.env.example
+secrets/
+secret.yaml
+*-secret.yaml
+
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+
+# Claude Code local settings and session data
+.claude/
+
+
+# ── OS-generated files ────────────────────────────────────────────────────────
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V8
+.Trashes
+ehthumbs.db
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+desktop.ini
+
+# Linux
+*~
+
+
+# ── Editor and IDE ────────────────────────────────────────────────────────────
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+
+# JetBrains (IntelliJ, GoLand, etc.)
+.idea/
+*.iml
+
+# Vim / Neovim
+*.swp
+*.swo
+*.swn
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+
+# ── Shell and script artifacts ────────────────────────────────────────────────
+
+# Shell history files that may be dropped into project directories
+.bash_history
+.zsh_history
+
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+
+*.log
+logs/

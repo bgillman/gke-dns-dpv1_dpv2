@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-ilb
+  namespace: default
+  labels:
+    app: backend
+    cluster: gke-std-dpv1
+  annotations:
+    # Provisions an Internal Passthrough Network Load Balancer.
+    # The assigned IP comes from the node subnet (central-vpc-subnet-01: 10.0.0.0/20)
+    cloud.google.com/load-balancer-type: "Internal"
+    # Required for cross-region access within vpc-global.
+    # Internal Passthrough NLBs are regional by default — without this annotation,
+    # traffic sourced from a different region (e.g. dpv2 pods in us-west1 reaching
+    # this ILB in us-central1) is blocked at the load balancer level before
+    # firewall rules are even evaluated.
+    networking.gke.io/internal-load-balancer-allow-global-access: "true"
+spec:
+  selector:
+    app: backend
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  type: LoadBalancer

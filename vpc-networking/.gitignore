@@ -1,0 +1,36 @@
+# ── Terraform state ───────────────────────────────────────────────────────────
+# State files contain sensitive resource details and must never be committed.
+# Use remote state (GCS bucket) for team environments.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# ── Terraform working directory ───────────────────────────────────────────────
+# Created by `terraform init`. Contains downloaded providers and modules.
+.terraform/
+
+# ── Variable files ────────────────────────────────────────────────────────────
+# terraform.tfvars may contain project IDs, credentials, or other secrets.
+# Use terraform.tfvars.example (committed) as the documented template.
+terraform.tfvars
+*.auto.tfvars
+*.tfvars.local
+
+# ── Crash and debug logs ──────────────────────────────────────────────────────
+crash.log
+crash.*.log
+
+# ── Override files ────────────────────────────────────────────────────────────
+# Override files are typically used for local development tweaks.
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ── Terraform CLI config ──────────────────────────────────────────────────────
+.terraformrc
+terraform.rc
+
+# ── Sensitive credential files ────────────────────────────────────────────────
+*.json
+!terraform.tfvars.example

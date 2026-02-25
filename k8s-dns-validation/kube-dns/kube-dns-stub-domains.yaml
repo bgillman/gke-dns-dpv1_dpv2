@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-dns
+  namespace: kube-system
+data:
+  # stubDomains tells kube-dns to forward queries for these suffixes to the
+  # specified upstream resolver instead of handling them locally.
+  #
+  # 169.254.169.254 is GCP's metadata server, which also acts as the Cloud DNS
+  # resolver. It respects private zone visibility based on the source VPC, so
+  # any private zone attached to vpc-global is resolvable from pods in dpv1
+  # once these stub domains are in place.
+  #
+  # gke-std-dpv2.local:
+  #   Allows pods in gke-std-dpv1 to resolve services in gke-std-dpv2 using
+  #   their native Cloud DNS VPC-scoped names, e.g.:
+  #     backend.default.svc.gke-std-dpv2.local
+  #
+  # svc.internal:
+  #   Allows pods in gke-std-dpv1 to resolve names from the Cloud DNS private
+  #   zone created in Phase 3, e.g.:
+  #     backend-central.svc.internal
+  #     backend-west.svc.internal
+  stubDomains: |
+    {
+      "gke-std-dpv2.local": ["169.254.169.254"],
+      "svc.internal":       ["169.254.169.254"]
+    }

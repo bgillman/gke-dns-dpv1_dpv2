@@ -1,0 +1,121 @@
+#!/bin/bash
+
+# ------------------------------------------------------------------------------
+# GKE Cluster Configuration
+#
+# Instructions:
+# 1. Copy this file to "config.sh"
+#    cp config.sh.example config.sh
+#
+# 2. Edit the variables in "config.sh" to match your environment.
+#
+# 3. Run the cluster creation script. The script will automatically source the
+#    variables from your "config.sh" file.
+#
+# Note: "config.sh" is ignored by git to prevent committing sensitive data.
+# ------------------------------------------------------------------------------
+
+# --- Project and Location ---
+
+# Google Cloud Project ID
+# Example: "my-gcp-project-12345"
+export PROJECT_ID="your_project_id"
+
+# Google Cloud Region for the cluster
+# Example: "us-west1"
+export REGION="your_region"
+
+# Google Cloud Zone for the cluster (for zonal clusters)
+# Example: "us-west1-a"
+export ZONE="your_zone"
+
+
+# --- Cluster Identity ---
+
+# Name for the GKE cluster
+# Example: "my-production-cluster"
+export CLUSTER_NAME="your_cluster_name"
+
+# GKE version for the control plane and nodes
+# Find available versions with: gcloud container get-server-config --region=$REGION
+# Example: "1.28.3-gke.12345"
+export CLUSTER_VERSION="1.34.0-gke.2201000"
+
+# GKE release channel (rapid, regular, stable)
+# See: https://cloud.google.com/kubernetes-engine/docs/concepts/release-channels
+export RELEASE_CHANNEL="rapid"
+
+
+# --- Networking ---
+
+# Name of the VPC Network to deploy the cluster into
+# Example: "my-vpc-network"
+export VPC_NETWORK_NAME="vpc-02-us-central"
+
+# Name of the VPC Subnet for the cluster nodes and pods
+# Example: "my-vpc-subnet"
+export VPC_SUBNET_NAME="vpc-02-subnet-04"
+
+# VPC Network to deploy the cluster into
+# Format: "projects/<PROJECT_ID>/global/networks/<NETWORK_NAME>"
+export VPC_NETWORK="projects/${PROJECT_ID}/global/networks/${VPC_NETWORK_NAME}"
+
+# VPC Subnet for the cluster nodes and pods
+# Format: "projects/<PROJECT_ID>/regions/<REGION>/subnetworks/<SUBNET_NAME>"
+export VPC_SUBNET="projects/${PROJECT_ID}/regions/${REGION}/subnetworks/${VPC_SUBNET_NAME}"
+
+# Pod IP address range (CIDR notation)
+# Must be a valid private IP range.
+export POD_CIDR="your_pod_cidr"
+
+# Name of the existing secondary range on the subnet to use for pods.
+# This must match the secondary range name defined in your subnet (e.g. via Terraform).
+# Using a named range prevents GKE from trying to create a new one with the same CIDR.
+export POD_RANGE_NAME="your_pod_range_name"
+
+# Service IP address range (CIDR notation)
+# Optional, can be auto-assigned by GKE if left empty.
+export SERVICE_CIDR="your_services_cidr"
+
+# Name of the existing secondary range on the subnet to use for services.
+# Must match the secondary range name defined in your subnet.
+export SERVICES_RANGE_NAME="your_services_range_name"
+
+# DNS domain for the cluster (required when using Cloud DNS with VPC scope).
+# Must be unique per cluster sharing the same VPC to avoid DNS conflicts.
+# Example: "<cluster-name>.local"
+export CLUSTER_DNS_DOMAIN="your_cluster_name.local"
+
+
+# --- Node Pool Configuration ---
+
+# For lab testing & validation, the recommendation is to leave these values as default.
+
+# VM machine type for the worker nodes
+# Example: "n2-standard-4"
+export MACHINE_TYPE="e2-medium"
+
+# Number of nodes per zone in the default node pool
+export NUM_NODES="3"
+
+# Boot disk size in GB for each node
+export DISK_SIZE="100"
+
+# Boot disk type (pd-standard, pd-balanced, pd-ssd)
+export DISK_TYPE="pd-balanced"
+
+# Node OS image type
+# Example: "COS_CONTAINERD" or "UBUNTU_CONTAINERD"
+export IMAGE_TYPE="COS_CONTAINERD"
+
+# Maximum number of pods that can run on a single node
+export MAX_PODS_PER_NODE="110"
+
+
+# --- Upgrade Strategy ---
+
+# Maximum number of extra nodes created during an upgrade
+export MAX_SURGE_UPGRADE="1"
+
+# Maximum number of nodes that can be unavailable during an upgrade
+export MAX_UNAVAILABLE_UPGRADE="0"
