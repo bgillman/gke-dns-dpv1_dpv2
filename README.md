@@ -188,8 +188,6 @@ gke-dns-dpv1_2/
 ├── gke-std-private-cluster/               # GKE cluster creation scripts
 │   ├── create-gke-dpv1-cluster.sh         # Creates gke-std-dpv1 (Dataplane V1, kube-dns)
 │   ├── create-gke-dpv2-cluster.sh         # Creates gke-std-dpv2 (Dataplane V2, Cloud DNS)
-│   ├── create-gke-cluster.sh              # Generic zonal cluster script
-│   ├── create-gke-regional-cluster.sh     # Generic regional cluster script
 │   ├── config.sh.example                  # Configuration template (copy to config.sh)
 │   └── README.md                          # Script-specific documentation
 │

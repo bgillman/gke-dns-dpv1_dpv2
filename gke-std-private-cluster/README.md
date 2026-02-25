@@ -1,106 +1,155 @@
-# GKE Standard Private Cluster Deployment Script
+# GKE Standard Private Cluster Deployment Scripts
 
-This repository contains scripts to automate the creation of a Google Kubernetes Engine (GKE) Standard private cluster. It is designed to provision a secure and production-ready cluster with a variety of features enabled by default.
+This directory contains the scripts to create the two GKE Standard private clusters used in
+this project. Each script is purpose-built for its cluster's dataplane and DNS configuration.
 
-There are two scripts available:
-- `create-gke-cluster.sh`: Creates a zonal GKE cluster.
-- `create-gke-regional-cluster.sh`: Creates a regional GKE cluster.
+| Script | Cluster | Dataplane | DNS |
+|---|---|---|---|
+| `create-gke-dpv1-cluster.sh` | `gke-std-dpv1` | V1 — `LEGACY_DATAPATH` (kube-proxy) | kube-dns (`cluster.local`) |
+| `create-gke-dpv2-cluster.sh` | `gke-std-dpv2` | V2 — `ADVANCED_DATAPATH` (eBPF) | Cloud DNS (VPC scope) |
+
+> **Prerequisite:** The VPC networking in `vpc-networking/` must be fully deployed before
+> running either script. Both scripts reference pre-existing subnets and named secondary IP
+> ranges that Terraform creates.
+
+---
 
 ## Features
 
-The scripts provision a GKE cluster with the following features:
+Both scripts provision a GKE Standard cluster with the following features enabled by default:
 
-*   **Private Cluster:** Worker nodes have no external IP addresses.
-*   **Private Control Plane:** The Kubernetes API server is only accessible from authorized networks.
-*   **Workload Identity:** For secure authentication of workloads to Google Cloud services.
-*   **Shielded Nodes:** Provides verifiable integrity of your nodes.
-*   **Custom VPC Networking:** Deploys the cluster into a pre-existing VPC and subnet.
-*   **Dataplane V2:** For improved networking performance and security, with metrics and flow observability.
-*   **Enhanced Monitoring:** In-depth monitoring for various Kubernetes resources.
-*   **Managed Prometheus:** For scraping Prometheus-style metrics.
-*   **Gateway API**: The script enables the `standard` channel of the Gateway API.
+- **Private nodes** — worker node VMs have no external IP addresses
+- **Fully private control plane** — no public IP, no IP-based endpoint (`--no-enable-ip-access`)
+- **DNS-based endpoint** — the sole method for `kubectl` access (`--enable-dns-access`)
+- **Workload Identity** — secure authentication of workloads to Google Cloud services
+- **Shielded nodes** — verifiable node integrity with integrity monitoring enabled
+- **Custom VPC networking** — deploys into pre-existing VPC subnets with named secondary ranges
+- **Enhanced monitoring** — system, storage, pod, deployment, HPA, kubelet, cAdvisor, DCGM
+- **Managed Prometheus** — Prometheus-compatible metrics scraping
+- **Gateway API** — standard channel enabled
 
-## Prerequisites
+`create-gke-dpv2-cluster.sh` additionally enables:
 
-Before running the scripts, ensure you have the following:
+- **Dataplane V2** (`--enable-dataplane-v2`) — eBPF-based CNI replacing kube-proxy
+- **DPv2 metrics** (`--enable-dataplane-v2-metrics`)
+- **DPv2 flow observability** (`--enable-dataplane-v2-flow-observability`)
+- **Cloud DNS** (`--cluster-dns=clouddns --cluster-dns-scope=vpc`) — replaces kube-dns with a
+  node-local stub resolver; VPC scope makes all private Cloud DNS zones automatically resolvable
 
-*   `gcloud` CLI installed and authenticated (`gcloud auth login`).
-*   A Google Cloud project with the required APIs enabled (the script will attempt to enable them).
-*   A pre-existing VPC and subnet that match the configuration you will set.
+---
 
 ## Configuration
 
-All configuration for the scripts is handled through a `config.sh` file. This allows you to define all your settings in one place and keeps your specific configuration separate from the core script logic.
+All cluster parameters are defined in `config.sh`, sourced automatically by both scripts.
+The file is gitignored — it is never committed.
 
-### Step 1: Create Your Configuration File
-
-A template is provided to make configuration easy. Copy the example file to create your own personal configuration:
+### Step 1 — Create your configuration file
 
 ```bash
 cp config.sh.example config.sh
 ```
 
-**Important:** The `config.sh` file is included in `.gitignore`, so your local configuration will not be committed to your repository. This is done to protect sensitive information like your Project ID.
+### Step 2 — Edit `config.sh`
 
-### Step 2: Edit `config.sh`
+Key variables to set before running either script:
 
-Open `config.sh` in a text editor. It contains all the variables needed to create your cluster. The file is heavily commented to explain what each variable does.
+| Variable | dpv1 value | dpv2 value |
+|---|---|---|
+| `PROJECT_ID` | your project ID | your project ID |
+| `CLUSTER_NAME` | `gke-std-dpv1` | `gke-std-dpv2` |
+| `REGION` | `us-central1` | `us-west1` |
+| `ZONE` | `us-central1-a` | `us-west1-a` |
+| `VPC_NETWORK_NAME` | `vpc-global` | `vpc-global` |
+| `VPC_SUBNET_NAME` | `central-vpc-subnet-01` | `west-vpc-subnet-01` |
+| `POD_RANGE_NAME` | `central-pods` | `west-pods` |
+| `SERVICES_RANGE_NAME` | `central-services` | `west-services` |
+| `POD_CIDR` | `10.4.0.0/14` | `10.8.0.0/14` |
+| `SERVICE_CIDR` | `10.16.0.0/20` | `10.17.0.0/20` |
+| `CLUSTER_DNS_DOMAIN` | *(not used)* | `gke-std-dpv2.local` |
 
-Key variables to customize include:
-- `PROJECT_ID`
-- `REGION` and `ZONE`
-- `CLUSTER_NAME`
-- `VPC_NETWORK` and `VPC_SUBNET`
-- `MASTER_AUTHORIZED_NETWORKS` (to allow your IP to access the cluster)
+`CLUSTER_DNS_DOMAIN` is only referenced by `create-gke-dpv2-cluster.sh`. It sets the custom
+cluster DNS domain required when using Cloud DNS with VPC scope — each cluster sharing the
+same VPC must have a unique domain to avoid DNS conflicts.
 
-The scripts will automatically load the variables from this file when you run them. If `config.sh` does not exist, the script will exit with an error.
+---
 
 ## Usage
 
-Once you have created and customized your `config.sh` file, you can run either of the creation scripts.
+### Create gke-std-dpv1 (Dataplane V1, kube-dns)
 
-1.  **Make the script executable:**
+```bash
+chmod +x create-gke-dpv1-cluster.sh
+./create-gke-dpv1-cluster.sh
+```
 
-    Use this script to create a Zonal Cluster
-    ```bash
-    chmod +x create-gke-cluster.sh
-    ```
+### Create gke-std-dpv2 (Dataplane V2, Cloud DNS)
 
-    Use this script to create a Regional Cluster
-    ```bash
-    chmod +x create-gke-regional-cluster.sh
-    ```
+```bash
+chmod +x create-gke-dpv2-cluster.sh
+./create-gke-dpv2-cluster.sh
+```
 
-2.  **Run the desired script:**
+Both scripts will:
+1. Check prerequisites (`gcloud` installed, authenticated, `PROJECT_ID` set)
+2. Enable required Google Cloud APIs
+3. Display the full configuration and prompt for confirmation before creating anything
+4. Create the cluster (~10–15 minutes)
+5. Configure `kubectl` credentials via the DNS-based endpoint
+6. Verify the cluster configuration (dataplane, DNS provider, Workload Identity, private nodes,
+   Managed Prometheus)
+7. Print access and monitoring instructions
 
-    *   **To create a zonal cluster:**
-        ```bash
-        ./create-gke-cluster.sh
-        ```
-
-    *   **To create a regional cluster:**
-        ```bash
-        ./create-gke-regional-cluster.sh
-        ```
-
-The script will then guide you through the rest of the process.
+---
 
 ## Post-Creation
 
-After the cluster is created, the script will:
+### Accessing the cluster
 
-1.  **Configure `kubectl`:** It will fetch the credentials for the new cluster so you can use `kubectl` to interact with it.
-2.  **Verify the cluster:** It will run a series of checks to verify that the cluster is configured correctly, including checking node status, Dataplane V2, Workload Identity, and more.
-3.  **Display access instructions:** It will print instructions on how to access the cluster's private control plane.
-4.  **Display monitoring instructions:** It will provide information on the monitoring features and how to use them.
+Both clusters use the GKE DNS-based endpoint exclusively. The control plane has no public IP.
+Access requires running from within Google Cloud (GCE VM, Cloud Shell, GKE pod) or via Cloud
+VPN / Cloud Interconnect into the VPC.
 
-## Accessing the Cluster
+```bash
+# Fetch credentials (DNS endpoint)
+gcloud container clusters get-credentials CLUSTER_NAME \
+  --region=REGION \
+  --project=PROJECT_ID \
+  --dns-endpoint
 
-Since this is a private cluster with an authorized network, you can access the Kubernetes API server in the following ways:
+# Verify connectivity
+kubectl get nodes
+kubectl cluster-info
+```
 
-*   **From an authorized IP address:** If your current IP is in the `MASTER_AUTHORIZED_NETWORKS` list in your `config.sh`, you can use `kubectl` directly.
-*   **Add your IP to the authorized network:** You can run a `gcloud` command to add your IP to the list.
-*   **From Google Cloud Shell:** Cloud Shell is automatically authorized for clusters in the same project.
-*   **From a bastion host:** You can set up a bastion host in the same VPC as the cluster.
+### Verifying cluster configuration
 
-The script will output detailed instructions on how to do this after the cluster is created.
+```bash
+# Confirm dataplane provider
+gcloud container clusters describe CLUSTER_NAME \
+  --region=REGION --project=PROJECT_ID \
+  --format='value(networkConfig.datapathProvider)'
+# dpv1 expected: LEGACY_DATAPATH
+# dpv2 expected: ADVANCED_DATAPATH
+
+# Confirm no public IP endpoint
+gcloud container clusters describe CLUSTER_NAME \
+  --region=REGION --project=PROJECT_ID \
+  --format='value(controlPlaneEndpointsConfig.ipEndpointsConfig.enabled)'
+# Expected: False
+
+# Confirm DNS-based endpoint is active
+gcloud container clusters describe CLUSTER_NAME \
+  --region=REGION --project=PROJECT_ID \
+  --format='value(controlPlaneEndpointsConfig.dnsEndpointConfig.enabled)'
+# Expected: True
+
+# dpv2 only — confirm Cloud DNS configuration
+gcloud container clusters describe gke-std-dpv2 \
+  --region=us-west1 --project=PROJECT_ID \
+  --format='table(
+    networkConfig.dnsConfig.clusterDns,
+    networkConfig.dnsConfig.clusterDnsScope,
+    networkConfig.dnsConfig.clusterDnsDomain
+  )'
+# Expected: CLOUD_DNS | VPC_SCOPE | gke-std-dpv2.local
+```
